@@ -1,0 +1,190 @@
+---
+title: "Project1_Data612"
+author: "Samriti Malhotra, Vishal Arora"
+date: "June 7, 2019"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+  html_document:
+    code_folding: hide
+    highlight: tango
+    number_sections: yes
+    smooth_scroll: yes
+    theme: united
+    toc: yes
+    toc_collapsed: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Building a basic Recommender system.                        
+This is a basic recommender system where we created a sample ratings grid where movie(s) have been rated by users.Few vales are NA and hence this recommender system using BaseLine Predictor(avg mean + rowBias + columnB ias ) will try to predict the ratings for the ones which have not been rated and at the end we will check how much improvment it brings to train and test data set .                   
+
+The libraries used during this project are as following                      
+*reshape2*              
+*kableExtra*            
+
+```{r message=FALSE, warning=FALSE, eval=TRUE, echo=FALSE}
+library(reshape2)
+library(kableExtra)
+```
+
+##Load Data                            
+
+Load the sample data from github[Sample Movie Data](https://raw.githubusercontent.com/Vishal0229/DATA612_RecommenderSystem/master/Project1/ratings.csv). Using reshape2 library cast and then using base package's apply function we convert the raw data into user-movie matrix.                     
+
+
+```{r}
+ratings <- read.csv("https://raw.githubusercontent.com/Vishal0229/DATA612_RecommenderSystem/master/Project1/ratings.csv")
+kable(head(ratings,n=9))%>%
+  kable_styling(bootstrap_options = c("striped","condensed","responsive"),full_width   = F,position = "left",font_size = 12)%>%
+  row_spec(0, background ="gray")
+
+#converting the ratings data frame into user-movie matrix 
+
+
+ratingDT <- acast(ratings, user~movie, value.var="rating")
+ratingDT <- apply(ratingDT, 2,as.numeric) 
+kable(ratingDT) %>%
+  kable_styling(bootstrap_options = c("striped","condensed","responsive"),full_width   = F,position = "left",font_size = 12) %>%
+  row_spec(0, background ="gray")
+
+```
+
+## Training & Test data set.                            
+Next step we divided iur data set into training(75%) & test dataset(25%) . Then we deduced the average mean on training dataset and also caculated the RMSE on this sparse data set.                        
+
+```{r}
+
+## 75% of the sample size
+smp_size <- floor(0.75 * nrow(ratingDT))
+
+## set the seed to make your partition reproducible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(ratingDT)), size = smp_size)
+
+train <- ratingDT[train_ind, ]
+test <- ratingDT[-train_ind, ]
+
+kable(train) %>%
+  kable_styling(bootstrap_options = c("striped","condensed","responsive"),full_width   = F,position = "left",font_size = 12) %>%
+  row_spec(0, background ="gray")
+kable(test) %>%
+  kable_styling(bootstrap_options = c("striped","condensed","responsive"),full_width   = F,position = "left",font_size = 12) %>%
+  row_spec(0, background ="gray")
+
+```
+
+### Raw Average & RMSE on Training data set                                
+Next step we calcualted the mean average of train data set and then we calculated the RMSE on train  data set for the raw average.                                
+
+```{r}
+#deducing the raw mean average on train data set.
+train.avg <- mean(train, na.rm =TRUE)
+train.avg
+
+#function to calculate RMSE
+RMSE = function(data, data.avg){ 
+  sqrt(mean((data - data.avg)^2, na.rm =TRUE)) 
+}
+
+trainRMSE_beforeBias <-  RMSE(train,train.avg)
+trainRMSE_beforeBias
+
+
+```
+
+### Calculating Bias & Baseline predictors                        
+Next step we created function calcBias which takes matrix and the raw avergae of that matrix , and caculates the row wise bias and column wise bias . Then creates a  matrix adding  each row value with each column value and the raw average(mean) of that matrix and assinging the new values to this newly  reated matrix.                           
+
+> In short Baseline Predictor = Raw Average(mean) + User Bias + Movie Bias.                 
+
+Then we calculate the RMSE for the baseline predictor train set matrix.                  
+```{r}
+#Calculating the baseline predictor (raw average + userBias + movieBias)
+calcBias <- function(dataMatrix, dataAvg){
+  
+  userBias <- rowMeans(dataMatrix, na.rm=T) - dataAvg
+  movieBias <- colMeans(dataMatrix, na.rm=T) - dataAvg
+  
+  outMatrix <- dataMatrix
+  rowcount <-1
+  for(item in 1:nrow(dataMatrix))
+  {
+    colcount <-1
+    for(colItem in 1: ncol(dataMatrix))
+    {
+      
+     outMatrix[rowcount,colcount] <- dataAvg + userBias[[rowcount]] +  movieBias[[colcount]]
+      colcount <- colcount +1  
+    }
+    rowcount <- rowcount +1
+  }
+  return (outMatrix)
+}
+
+baselineTrain <- calcBias(train,train.avg)
+kable(baselineTrain)%>%
+  kable_styling(bootstrap_options = c("striped","condensed","responsive"),full_width   = F,position = "left",font_size = 12)%>%
+  row_spec(0, background ="gray")
+
+# clipping the values between 1 and 5, as our movie ratings cannot be below 1 and above 5.
+baselineTrain[baselineTrain<1] <- 1 
+baselineTrain[baselineTrain>5] <- 5 
+
+kable(baselineTrain)%>%
+  kable_styling(bootstrap_options = c("striped","condensed","responsive"),full_width   = F,position = "left",font_size = 12)%>%
+  row_spec(0, background ="gray")
+
+# Training dataset RMSE
+trainRMSE_AfterBias <-RMSE(baselineTrain,train.avg)
+trainRMSE_AfterBias
+```
+
+### Calculations  for Test data set.                              
+
+```{r}
+
+# Raw mean of the test dataset
+test.avg <- mean(test, na.rm =TRUE)
+test.avg
+testRMSE_beforeBias <-  RMSE(test,test.avg)
+testRMSE_beforeBias
+
+# Test dataset RMSE
+baselineTest <- calcBias(test, test.avg)
+#clipping the values to keep ratings between 1 & 5.
+baselineTest[baselineTest<1] <- 1
+baselineTest[baselineTest>5] <- 5 
+
+# Training dataset RMSE
+testRMSE_afterBias <- RMSE(baselineTest,test.avg)
+testRMSE_afterBias
+```
+
+## Comparing the Results                        
+### %Improvement for Train data set                           
+In train data set , improvment dipped(-ve) slightly which can be ignored as it is very minimal hence we can say that for train data set there is no improvment in RMSE through RAw average and through Basline predictor method. This might be due to n number of reason one of which can be very small set of dataset.                       
+```{r}
+t1 <- trainRMSE_beforeBias
+tb1 <- trainRMSE_AfterBias
+
+trainImprove_perc <- (1-(tb1/t1))*100
+trainImprove_perc
+```
+
+### %Improvement for Test data set                          
+We can clearly see that on our test data set , there has been 18% improvment after using Baseline predictor RMSE.                       
+
+```{r}
+t1 <- testRMSE_beforeBias
+tb1 <- testRMSE_afterBias
+
+testImprove_perc <- (1-(tb1/t1))*100
+testImprove_perc
+```
+

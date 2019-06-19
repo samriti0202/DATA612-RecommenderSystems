@@ -1,0 +1,300 @@
+---
+title: "Project2_Data-612- Content Based and Collaborative Filtering"
+author: "Samriti Malhotra, Vishal Arora"
+date: "June 18, 2019"
+output:
+  html_document:
+    code_folding: hide
+    highlight: tango
+    number_sections: yes
+    smooth_scroll: yes
+    theme: united
+    toc: yes
+    toc_collapsed: yes
+    toc_depth: 3
+    toc_float: yes
+    always_allow_html: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Objective :-                 
+The goal of this assignment is for you to try out different ways of implementing and configuring a recommender, and to evaluate different approaches. Implement at least two of these recommendation algorithms:                     
+. Content-Based Filtering                    
+. User-User Collaborative Filtering                
+. Item-Item Collaborative Filtering                          
+
+## Solution:- 
+We took this dataset ml-latest-small.zip from [Movie Lens site](https://grouplens.org/datasets/movielens/latest/) which describes 5-star rating and free-text tagging activity from MovieLens, a movie recommendation service. It contains 100836 ratings and 3683 tag applications across 9742 movies. These data were created by 610 users between March 29, 1996 and September 24, 2018. This dataset was generated on September 26, 2018.
+
+> Citation :- F. Maxwell Harper and Joseph A. Konstan. 2015. The MovieLens Datasets: History and Context. ACM Transactions on Interactive Intelligent Systems (TiiS) 5, 4: 19:1-19:19. https://doi.org/10.1145/2827872
+
+### Libraries used
+
+*recommenderlab*              
+*ggplot2*                
+*kableExtra*                 
+*dplyr*                  
+*reshape2*                     
+```{r message=FALSE, warning=FALSE, eval=TRUE, echo=FALSE}
+library(recommenderlab)
+library(ggplot2)
+library(kableExtra)
+library(dplyr)
+library(reshape2)
+```
+
+
+### Data loading , preperation and checking the similarity for USER & ITEM data
+
+Data is loaded from the github, and then selecting the columns to create a matrix which is a class of realRatingMatrix.
+Then we checked the similarity for first 5 users and 5 items and draw an image for the image.
+```{r}
+
+
+ratings <- read.csv("https://raw.githubusercontent.com/samriti0202/DATA612-RecommenderSystems/master/Project2/ratings.csv")
+titles <- read.csv("https://raw.githubusercontent.com/samriti0202/DATA612-RecommenderSystems/master/Project2/movies.csv")
+
+ratings <- ratings %>% select(userId, movieId, rating) 
+#converting the ratings data frame into userId-movieId matrix 
+ratingDT <- acast(ratings, userId~movieId, value.var="rating")
+#convert matrix into realRatingMatrix using recommenderLab package
+ratingDT <- as(as.matrix(ratingDT), "realRatingMatrix")
+#Checking the similarity between the first 5 users 
+similarity_user <- similarity(ratingDT[1:5,],method="cosine", which="userId")
+#converting similarity_user into matrix and visulaising the same.
+as.matrix(similarity_user)
+#visualize the matrix for user
+image(as.matrix(similarity_user),main="User(userId) Similarity")
+
+#Similarly Checking the similarity between the first 5 items 
+similarity_item <- similarity(ratingDT[,1:5],method="cosine", which="movieId")
+#visualize the matrix for items
+image(as.matrix(similarity_item),main="Item(movieId) similarity")
+
+```
+
+
+
+### Cleaning the dataset
+Finding the unqiue values for ratings and anything 0 , we are removing them and plotting the same to see the distribution of ratings .
+```{r}
+#Exploring the data first converting the matrix into vector and see how many unique value are there for ratings 
+vector_ratings <- as.vector(ratingDT@data)
+unique(vector_ratings)
+#displaying in tabular form the c ount of each unique value.
+table_ratings <- table(vector_ratings)
+# As per data description 0 are NA and we can even ignore anything less than 1 
+vector_ratings<- factor(vector_ratings[vector_ratings != 0])
+
+#visualize movie data ratngs using ggplot2
+qplot(vector_ratings) + ggtitle("Distribution of the ratings")
+
+```
+
+We can clearly see for tha rating distribution that the most of the ratings are above 2 and most comment one is 4 followed by 3 .
+
+Doing further analysis of the Item(movieId) data set to find which are top viewed movies. Using colCounts function we calculate the views for each movieId.Then we sort the movies number of views.
+Then visualising the same for top 6 movies(movieID) which are most viewed.
+```{r}
+
+
+# Doing other explanotary analysis on movie data, whic are top watched movies.
+view_per_movie <- colCounts(ratingDT)
+table_views <- data.frame(
+  movie = names(view_per_movie),
+  views = view_per_movie
+)
+table_views <- table_views[order(table_views$views,decreasing = TRUE),]
+ggplot(table_views[1:6,],aes(x=movie, y=views))+
+  geom_bar(stat="identity")+theme(axis.text.x=element_text(angle=45,hjust=1))+ggtitle("Number of views of the top movies")
+
+```
+
+Looking at the distribution of top 6 watched movies, we can clearly say that Movie by movieId = 356 is the most watched followed by 318 movieId.
+
+To find the top-rated movies , we will use colMeans to find the average rating for each movie(movieId). In the plot we can clearly see that average ratings is 3.5 and few has got 0.5,1and 5  with view cunt less than 500. We can safely assume that these movies received a rating from few people and hence we can remove them to make data more relevant. 
+```{r}
+#exploring the average ratings
+
+average_ratings <- colMeans(ratingDT)
+
+qplot(average_ratings)+stat_bin(binwidth = 0.1)+
+  ggtitle("Distribution of the average movie rating")
+
+average_ratings_relevant <- average_ratings[view_per_movie >100]
+qplot(average_ratings_relevant)+stat_bin(binwidth = 0.1)+
+  ggtitle("Distribution of the movies with views >100")
+
+#Heatmap of ratingDT data for top 10 rows and 15 columns
+
+image(ratingDT[1:10,1:15],main="Heatmap of the top 10 rows and 15 columns rating matrix")
+
+```
+
+
+ To determine the most relevant users(who has seen many movies) and relevant movies(which has been seen by many users).                     
+1) Determine min no of movies per user.                    
+2) Determine min  no of users per movie.                    
+3) Select users and movies matching these criteria.                        
+we will use quantile function for this            
+```{r}
+min_n_movies <- quantile(rowCounts(ratingDT),0.99)
+min_n_movies
+min_n_users <- quantile(colCounts(ratingDT),0.99)
+min_n_users
+
+image(ratingDT[rowCounts(ratingDT)> min_n_movies, colCounts(ratingDT)>min_n_users],main="Heatmap of relevant top users & movies.")
+
+```
+
+We can see clearly that some columns are more darker than other that means those movies hs more views than rest and similarly darker rows means users giving more higher rating than other. Hence we will have to normalise the data.                  
+
+### Data Preperation                        
+1) Select the relevant data                
+2) Normalize the data              
+
+As rule of thumb for beginning user who rating more than 50 movies and movies which have been watched more than 100 time. those are the ones we going to take initially.Then we take top 2% of the data and prepare the heatmap and we will still see some rows and columns are darker than others.            
+Well this was for only top 2% , lets take a average rating distribution for whole set.
+
+
+```{r}
+
+
+ratings_movies <- ratingDT[rowCounts(ratingDT)>50, colCounts(ratingDT)>100]
+
+ratings_movies
+
+# lets take the top 2% users and movies and prepare a heatmap.
+
+min_movies <- quantile(rowCounts(ratings_movies),0.98)
+min_users <- quantile(colCounts(ratings_movies),0.98)
+
+image(ratings_movies[rowCounts(ratings_movies)>min_movies,colCounts(ratings_movies)>min_users],main="Heatmap of the top users and movies")
+
+# To know the average ratio per user
+average_ratings_perUser <- rowMeans(ratings_movies)
+qplot(average_ratings_perUser)+ stat_bin(binwidth=0.1)+ggtitle("Distribution of the average rating per user")
+```
+We can clearly see from above ratinmg distribution that our ratings is still very variedly distributed. Hence we normalize the data and remocommenderLab package has inbuilt normalize function for this. Then we again create a heatmap to the distrbition for rows and columns to see if still there is anamoly 
+
+
+
+```{r}
+ratings_movies_norm <- normalize(ratings_movies) 
+
+image(ratings_movies_norm[rowCounts(ratings_movies_norm)>min_movies,colCounts(ratings_movies_norm)>min_users],main="Heatmap of the top users and movies after normalization")
+
+```
+
+Now the data is continous but we still see blue and red but that is due to drwaing the heat map only for top user and movies.
+
+### Building the Item-based Collaborative Filtering Model (IBCF)                    
+
+For this we will use the relevant data i.e.                 
+1) user who has rated more than 50 movies.                                        
+2) A movie which has been rated above 100 times.                   
+
+
+```{r}
+#Building an Item-Based Collaborative Filtering MODEL 
+# getting up training & test data sets
+
+which_train <- sample(x=c(TRUE,FALSE), size=nrow(ratings_movies),replace=TRUE, prob=c(0.8,0.2))
+
+#creating train set and test set
+recc_data_train<- ratings_movies[which_train,]
+recc_data_test <- ratings_movies[!which_train,]
+
+#using IBCF(Item Based Collaborative filtering) model
+recc_model <-Recommender(data=recc_data_train,method="IBCF",parameter=list(k=30))
+
+
+#Applying the recommender model on the test data/set
+#n_recommended is the no of items we want to recommend for each user
+n_recommded<-6
+
+recc_predicted <- predict(object = recc_model,newdata=recc_data_test,n=n_recommded)
+
+
+#we can extract the movies based on the item labels for one user
+recc_user_1 <- recc_predicted@items[[1]]
+recc_movies_user_1 <- recc_predicted@itemLabels[recc_user_1]
+recommended <- as.data.frame(as.integer(recc_movies_user_1))
+colnames(recommended) <- c("movieId")
+data <- recommended %>% inner_join(titles, by = "movieId") %>% select(Movie = "title")
+knitr::kable(data, format = "html") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+
+# construct matrix with the recommendation for each user
+recc_matrix <- sapply(recc_predicted@items, function(x){colnames(recc_data_test)[x]})
+dim(recc_matrix)
+#Visualizing for first 6 users
+recc_matrix[,1:6]
+
+
+#build a recommendation vector so build a frequncy plot
+number_of_items<- factor(table(recc_matrix))
+chart_title <- "Distribution of the number of items for IBCF"
+
+qplot(number_of_items)+ggtitle(chart_title)
+
+```
+
+From the frequency plot we can clearly see that most of the movies are recommended few times and few movies are recommended many times.
+
+```{r}
+
+# Build the UBCF recommender model
+
+recc_model_ubcf <- Recommender(data=recc_data_train, method="UBCF")
+model_details_ubcf <- getModel(recc_model_ubcf)
+
+
+model_details_ubcf$data
+#Applying the model on test set
+
+n_recommded <-6
+
+recc_predicted_ubcf <- predict(object=recc_model_ubcf, newdata=recc_data_test,n=n_recommded)
+
+#we can extract the movies based on the item labels for one user
+recc_user_1 <- recc_predicted_ubcf@items[[1]]
+recc_movies_user_1 <- recc_predicted_ubcf@itemLabels[recc_user_1]
+recommended <- as.data.frame(as.integer(recc_movies_user_1))
+colnames(recommended) <- c("movieId")
+data <- recommended %>% inner_join(titles, by = "movieId") %>% select(Movie = "title")
+knitr::kable(data, format = "html") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+
+recc_matrix <- sapply(recc_predicted_ubcf@items, function(x){colnames(ratings_movies)[x]})
+dim(recc_matrix)
+
+recc_matrix[,1:4]
+
+number_of_items <- factor(table(recc_matrix))
+chart_title <- "Distribution of the number of items for UBCF"
+
+qplot(number_of_items)+ggtitle(chart_title)
+
+```
+
+We can clearly see from the plot that compared to IBCF model frequency plot, UBCF  distribution has longer trail. Hence few movies are recommened much more time. In IBCF it is 16 but in UBCF it is 29.
+
+# Summary
+
+In general UBCF is generaly more accurate than IBCF for data set which are not bigger. May be more concrete evaluation means have to be applied for evaluating the models.Which will be covered in next topic.
+
+
+
+
+
+
+
+
+

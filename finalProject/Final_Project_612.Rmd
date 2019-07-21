@@ -1,0 +1,285 @@
+---
+title: "Final_Project"
+author: "Samriti Malhotra && Vishal Arora"
+date: "7/14/2019"
+output:
+  pdf_document: null
+  html_document: 
+    df_print: paged
+  toc: yes
+  number_sections: yes
+  highlight: tango
+  smooth_scroll: yes
+  theme: united
+  always_allow_html: yes
+  toc_collapsed: yes
+  toc_depth: 3
+  toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Overview : Final Project Recommender system.
+
+As part of our Data612 , we need to build a working recommender system as our final project assignment.                                 
+
+Below are libraries used for thuis project                          
+*recommenderlab*                
+*dplyr*          
+*reshape2*                
+*kableExtra*                
+*tidyr*                  
+*data.table*                  
+```{r message=FALSE, warning=FALSE, eval=TRUE, echo=FALSE}
+library(recommenderlab)
+library(dplyr)
+library(reshape2)
+library(kableExtra)
+library(ggplot2)
+library(tidyr)
+library(data.table)
+
+
+```
+
+
+## Data loading , preperation of relevant dataset
+Data file is loaded from local drive as the data set was heavy and github doesn't supports this heavy file. Due to local menmory issues curtailing the dataset to be loaded to only rows 10k . Loading all the 3 csv's and joining then merged them into one big data frame using dplyr & tidyr functions like merge,filter,groupby etc. Finally we extract from this big data frame our rating DF which consists of user,isbn,ratings. We will be using this new data frame for our recommender models.                        
+
+First we convert the data frame inot matrix and then into realRatingMatrix object.
+Data has been taken from [Book Ratings]( 
+http://www2.informatik.uni-freiburg.de/~cziegler/BX/) 
+
+```{r}
+set.seed(3445) 
+# to keep #s from the results the same
+
+# load data from local drive
+dfbookratings <- read.csv("ratings.csv", header = TRUE, sep =";", stringsAsFactors = FALSE ,nrows = 10000)
+
+dim(dfbookratings)
+
+colnames(dfbookratings) # "User.ID";"ISBN";"Book.Rating"
+
+colnames(dfbookratings) <- c("user","isbn","rating")
+
+dfusers <- read.csv("users.csv", header = TRUE, sep =";", stringsAsFactors = FALSE)
+
+
+colnames(dfusers) # "User.ID";"Location";"Age"
+
+
+colnames(dfusers) <- c("user","location","age")
+
+dfbooks <- read.csv("books.csv", header = TRUE, sep =";", stringsAsFactors = FALSE)
+
+
+# Data Preparation
+
+colnames(dfbooks) <- c("isbn", "title","author","yearpub", "publisher", "iurls","iurlm", "iurll")
+dfbooks <- dfbooks %>% select("isbn", "title","author","yearpub", "publisher","iurlm")
+
+
+combinedData <- merge(dfbookratings,dfbooks, by=c("isbn"))
+combinedData <- merge(combinedData,dfusers, by=c("user"))
+length(unique(combinedData$isbn)) # No of Unique ISBNs
+
+dfbookratingsvalid <- combinedData %>% group_by(user) %>% filter(n()>4) %>% group_by(isbn) %>% filter(n()>5)
+
+
+
+dfbookratingswide <- dfbookratingsvalid %>% select(user, isbn, rating) %>% spread(isbn, rating)%>%  arrange(user)
+
+
+
+rownames(dfbookratingswide) <- dfbookratingswide$user
+allusersrated <- rownames(dfbookratingswide) 
+allbooksrated <- colnames(dfbookratingswide)
+
+dfbookratingswidet <- dfbookratingswide %>% select(-user)
+
+
+
+booksDF <- merge(dfbooks,dfbookratings,by ="isbn")
+
+
+
+# defining the rating table by selecting the user,ISBN,rating columns
+ratingDF <- select(booksDF,"user","isbn","rating")
+data.table(head(ratingDF))
+
+ratingDF$isbn <- as.integer(ratingDF$isbn)
+ratingDF$user <- as.integer(ratingDF$user)
+
+
+
+ratingDF <- na.omit(ratingDF)
+
+ratings_wide <- reshape(ratingDF, idvar="user",timevar = "isbn", direction = "wide") %>% arrange(user)
+
+colnames(ratings_wide)[colnames(ratings_wide)=="user"] <-"ratingDF.user"
+names(ratings_wide) <- substring(names(ratings_wide),8)
+
+ratings_wide_2 <- ratings_wide[,-1]
+rownames(ratings_wide_2) <- ratings_wide[,1]
+ratings_matrix_wide <- as.matrix(ratings_wide_2)
+ratings_matrix_wide[is.na(ratings_matrix_wide)] <- 0
+ratings_matrix <- as(ratings_matrix_wide, "realRatingMatrix")
+
+```
+## Data Exploration
+Exploring the data , extracting the matrix data into vector and then finding the unique ratings . Then summing the total ratings polled  for each unique rating . Exteracting out the ratings for 0 and plotting to find the most common rating in data.
+```{r}
+#Exploring the data first converting the matrix into vector and see how many unique value are there for ratings 
+vector_ratings <- as.vector(ratings_matrix@data)
+
+knitr::kable(unique(vector_ratings))%>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+#displaying in tabular form the count of each unique value.
+##### Need to open this when we run on another system as this system has very less RAM
+table_ratings <- table(vector_ratings)
+knitr::kable(table_ratings)%>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+
+# As per data description 0 are NA and we can even ignore anything less than 1 
+vector_ratings<- factor(vector_ratings[vector_ratings != 0])
+
+#visualize movie data ratngs using ggplot2
+qplot(vector_ratings) + ggtitle("Distribution of the ratings")
+rm(vector_ratings)
+rm(table_ratings)
+```
+
+Clearly 0 is most common rating given, then exluding the zero and plotting it on graph gives us the representation that 8 is most common rating provided followed by 7 and 1 is least rating provided.
+
+
+Finding the rating per book (column wise) and rating provided by per user(i.e. row wise)
+```{r}
+view_per_books <- colCounts(ratings_matrix)
+
+table_views <- data.frame(
+  book = names(view_per_books),
+  views = view_per_books
+)
+table_views <- table_views[order(table_views$views,decreasing = TRUE),]
+
+knitr::kable(head(table_views))%>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+
+##row counts for user ratings
+
+ratings_per_user <- rowCounts(ratings_matrix)
+
+table_views <- data.frame(
+  user = names(ratings_per_user),
+  rating = ratings_per_user
+)
+table_views <- table_views[order(table_views$rating,decreasing = TRUE),]
+
+knitr::kable(head(table_views))%>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+
+
+```
+From the above observation , we can clearly say the maximum column wise rating per book is 472 and maximum row wise rating provided by user is 2327.                        
+
+## Model Building                        
+
+Spliting the data into training and testing set. We set 80% of data values into training set, and the rest 20% into testing set. Also set that any rating above 5 or equal to 5 is considered to be a good rating , and below 5 is bad ratings. 
+
+Creating a cluster of Models with evaluationScheme and using "split" ,ethod to run against the data and then  evaluating them 
+
+
+```{r}
+percentage_training <- 0.8
+items_to_keep <- 100
+# above 5 is good ratings, below 5 is bad ratings.
+rating_threshold <- 5
+# times to run the evaluation
+n_eval <- 1
+evaluation_set <- evaluationScheme(data=ratings_matrix,method = "split", train = percentage_training, given = items_to_keep, goodRating = rating_threshold, k = n_eval)
+evaluation_set
+
+getData(evaluation_set,"train")
+
+models_to_evaluate <- list(
+  IBCF_cos = list(name = "IBCF", param = list(method = "cosine")),
+  IBCF_cor = list(name = "IBCF", param= list (method = "pearson")),
+  UBCF_cos = list(name = "UBCF", param = list(method = "cosine")),
+  UBCF_cor = list(name = "UBCF", param = list(method = "pearson")),
+  random=list(name="RANDOM", param =NULL)
+)
+n_recommendations <- c (1,5, seq(10,50,10))
+list_results <- evaluate(x = evaluation_set, method = models_to_evaluate, n = n_recommendations)
+
+avg_matrices <-lapply(list_results,avg)
+knitr::kable(head(avg_matrices$UBCF_cos[,1:8]))%>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+Plotting the output to draw ROC curve to find the best Prtediction Model from the above set of Models.
+
+```{r}
+plot(list_results,annotate = 1, legend = "topleft",main="ROC Curve")
+
+```
+Looking at the above graph it is clear visible that  UBCF model using cosine method is the  one covering the maximum area unser the curve which signifies that this model is best.
+
+```{r}
+plot(list_results,"prec/rec", annotate = 1, legend = "bottomright", main = "Precision-recall")
+
+```
+The good performance index is the area under the AUC curve. In our graph, the highest is UBCF with cosine distance, so it is the best-perfoming technique that we can use. For the Precision-recall graph, UBCF with cosine distance is still the top model.
+
+
+
+Apache Spark ML implements alternating least squares (ALS) for collaborative filtering, a very popular algorithm for making recommendations
+```{r}
+library(sparklyr)
+
+sc <- spark_connect(master = "local")
+
+sp_books <- sdf_copy_to(sc,ratingDF,"spbooks",overwrite = TRUE)
+partitions <- sp_books %>% sdf_random_split(training = 0.8, test = 0.2)
+
+sp_books_training <- partitions$training
+sp_books_test <- partitions$test
+head(sp_books_training)
+```
+
+```{r}
+
+sparkALS <- ml_als(sp_books_training, max_iter = 5, nonnegative = TRUE,         rating_col = "rating", user_col = "user", item_col = "isbn")
+
+sparkPred <- sparkALS$.jobj %>%
+  invoke("transform", spark_dataframe(sp_books_test)) %>%
+  collect()
+
+sparkPred <- sparkPred[!is.na(sparkPred$prediction), ]
+
+predictions <- ml_predict(sparkALS, sp_books_test)
+
+mseSpark <- mean((sparkPred$rating - sparkPred$prediction)^2)
+
+rmseSpark <- sqrt(mseSpark)
+
+maeSpark <- mean(abs(sparkPred$rating - sparkPred$prediction))
+
+accuracy <- data.frame(RMSE = rmseSpark, MSE = mseSpark, MAE = maeSpark)
+
+accuracy
+
+predictions <- data.frame(predictions)
+predictions$difference <- (predictions$rating - predictions$prediction)
+predictions$difference_square <- (predictions$difference)^2
+
+head(predictions)
+
+sqrt(mean(predictions$difference_square,na.rm = TRUE))
+
+```
+## Summary 
+We can clearly see that UBCF with cosine distance is clearly a better model in prediction.
+
+
